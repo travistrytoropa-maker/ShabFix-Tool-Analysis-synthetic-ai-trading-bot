@@ -33,10 +33,6 @@ class AnalysisEngine:
 
         self.risk = RiskEngine()
 
-    # =========================================================
-    # COMPLETE MARKET ANALYSIS
-    # =========================================================
-
     def analyze_market(
         self,
         symbol,
@@ -49,56 +45,118 @@ class AnalysisEngine:
 
         market_name = market_name or symbol
 
-        data = self.candles.get_multi_timeframe_data(
-            symbol=symbol,
-            count=candle_count
-        )
+        try:
 
-        # -----------------------------------------------------
-        # IMPORTANT SAFETY CHECK
-        # Prevents errors when candle engine returns
-        # None, invalid data, or a failed response.
-        # -----------------------------------------------------
+            data = self.candles.get_multi_timeframe_data(
+                symbol=symbol,
+                count=candle_count
+            )
 
-        if not data or not data.get("success"):
+        except Exception as error:
+
+            return {
+                "success": False,
+                "message": f"Candle engine error: {error}",
+                "market": market_name,
+                "symbol": symbol
+            }
+
+        # -----------------------------------------
+        # Validate candle engine response
+        # -----------------------------------------
+
+        if not data or not isinstance(data, dict):
+
+            return {
+                "success": False,
+                "message": "No market data returned",
+                "market": market_name,
+                "symbol": symbol
+            }
+
+        if not data.get("success"):
+
             return {
                 "success": False,
                 "message": data.get(
                     "message",
                     "No market data returned"
-                ) if isinstance(data, dict)
-                else "No market data returned"
+                ),
+                "market": market_name,
+                "symbol": symbol
             }
 
-        # -----------------------------------------------------
-        # TIMEFRAME ANALYSIS
-        # -----------------------------------------------------
+        # -----------------------------------------
+        # Get timeframe data
+        # -----------------------------------------
+
+        timeframes = data.get(
+            "timeframes",
+            {}
+        )
+
+        if not isinstance(timeframes, dict):
+
+            return {
+                "success": False,
+                "message": "Invalid timeframe data",
+                "market": market_name,
+                "symbol": symbol
+            }
 
         timeframe_results = {}
 
-        for timeframe in ["H1", "M30", "M5"]:
+        # -----------------------------------------
+        # Analyze each timeframe
+        # -----------------------------------------
 
-            timeframe_data = (
-                data.get("timeframes", {})
-                .get(timeframe)
+        for timeframe in [
+            "H1",
+            "M30",
+            "M5"
+        ]:
+
+            timeframe_data = timeframes.get(
+                timeframe
             )
 
             if not timeframe_data:
+
                 timeframe_results[timeframe] = {
                     "success": False,
-                    "message": "No timeframe data"
+                    "message": "No timeframe data",
+                    "candles": [],
+                    "patterns": [],
+                    "structure": {}
                 }
+
                 continue
 
-            if not isinstance(timeframe_data, dict):
+            if not isinstance(
+                timeframe_data,
+                dict
+            ):
+
                 timeframe_results[timeframe] = {
                     "success": False,
-                    "message": "Invalid timeframe data"
+                    "message": "Invalid timeframe response",
+                    "candles": [],
+                    "patterns": [],
+                    "structure": {}
                 }
+
                 continue
 
-            if not timeframe_data.get("success"):
-                timeframe_results[timeframe] = timeframe_data
+            if not timeframe_data.get(
+                "success"
+            ):
+
+                timeframe_results[timeframe] = {
+                    **timeframe_data,
+                    "patterns": [],
+                    "structure": {}
+                }
+
                 continue
 
             candles = timeframe_data.get(
@@ -106,79 +164,107 @@ class AnalysisEngine:
                 []
             )
 
-            if not candles or len(candles) < 10:
+            if not isinstance(
+                candles,
+                list
+            ):
+
+                candles = []
+
+            if len(candles) < 10:
+
                 timeframe_results[timeframe] = {
                     "success": False,
-                    "message": "Not enough candles"
+                    "message": "Not enough candles",
+                    "candles": candles,
+                    "patterns": [],
+                    "structure": {}
                 }
+
                 continue
 
-            # -------------------------------------------------
-            # CANDLE PATTERN ANALYSIS
-            # -------------------------------------------------
+            # -------------------------------------
+            # Pattern analysis
+            # -------------------------------------
 
             try:
+
                 detected_patterns = (
                     self.patterns.analyze(
                         candles
                     )
                 )
+
             except Exception as error:
+
                 detected_patterns = []
 
-            # -------------------------------------------------
-            # MARKET STRUCTURE ANALYSIS
-            # -------------------------------------------------
+            if not isinstance(
+                detected_patterns,
+                list
+            ):
+
+                detected_patterns = []
+
+            # -------------------------------------
+            # Structure analysis
+            # -------------------------------------
 
             try:
+
                 structure = (
                     self.structure.analyze(
                         candles
                     )
                 )
+
             except Exception as error:
+
                 structure = {
                     "trend": "UNKNOWN",
-                    "message": str(error)
+                    "error": str(error)
                 }
 
-            # -------------------------------------------------
-            # SAVE TIMEFRAME RESULT
-            # -------------------------------------------------
+            if not isinstance(
+                structure,
+                dict
+            ):
+
+                structure = {
+                    "trend": "UNKNOWN"
+                }
+
+            # -------------------------------------
+            # Store timeframe result
+            # -------------------------------------
 
             timeframe_results[timeframe] = {
+
                 "success": True,
 
                 "candles": candles,
 
                 "latest_price": candles[-1]["close"],
 
-                "patterns": (
-                    detected_patterns[-20:]
-                    if isinstance(
-                        detected_patterns,
-                        list
-                    )
-                    else []
-                ),
+                "patterns": detected_patterns[-20:],
 
                 "structure": structure
             }
 
-        # -----------------------------------------------------
-        # RETURN COMPLETE ANALYSIS
-        # -----------------------------------------------------
+        # -----------------------------------------
+        # Return complete analysis
+        # -----------------------------------------
 
         return {
+
             "success": True,
+
             "market": market_name,
+
             "symbol": symbol,
+
             "timeframes": timeframe_results
         }
-
-    # =========================================================
-    # DETERMINE MARKET DIRECTION
-    # =========================================================
 
     def determine_direction(
         self,
@@ -189,7 +275,10 @@ class AnalysisEngine:
         H1, M30 and M5 structure.
         """
 
-        if not isinstance(analysis, dict):
+        if not analysis or not isinstance(
+            analysis,
+            dict
+        ):
             return "WAIT"
 
         timeframes = analysis.get(
@@ -197,23 +286,55 @@ class AnalysisEngine:
             {}
         )
 
-        h1 = timeframes.get("H1", {})
-        m30 = timeframes.get("M30", {})
-        m5 = timeframes.get("M5", {})
+        if not isinstance(
+            timeframes,
+            dict
+        ):
+            return "WAIT"
+
+        h1 = timeframes.get(
+            "H1",
+            {}
+        )
+
+        m30 = timeframes.get(
+            "M30",
+            {}
+        )
+
+        m5 = timeframes.get(
+            "M5",
+            {}
+        )
 
         h1_trend = (
-            h1.get("structure", {})
-            .get("trend", "UNKNOWN")
+            h1.get(
+                "structure",
+                {}
+            ).get(
+                "trend",
+                "UNKNOWN"
+            )
         )
 
         m30_trend = (
-            m30.get("structure", {})
-            .get("trend", "UNKNOWN")
+            m30.get(
+                "structure",
+                {}
+            ).get(
+                "trend",
+                "UNKNOWN"
+            )
         )
 
         m5_trend = (
-            m5.get("structure", {})
-            .get("trend", "UNKNOWN")
+            m5.get(
+                "structure",
+                {}
+            ).get(
+                "trend",
+                "UNKNOWN"
+            )
         )
 
         bullish = 0
@@ -226,34 +347,28 @@ class AnalysisEngine:
         ]:
 
             if trend == "BULLISH":
+
                 bullish += 1
 
             elif trend == "BEARISH":
+
                 bearish += 1
 
-        # -----------------------------------------------------
-        # BUY
-        # -----------------------------------------------------
+        if (
+            bullish >= 2
+            and bullish > bearish
+        ):
 
-        if bullish >= 2 and bullish > bearish:
             return "BUY"
 
-        # -----------------------------------------------------
-        # SELL
-        # -----------------------------------------------------
+        if (
+            bearish >= 2
+            and bearish > bullish
+        ):
 
-        if bearish >= 2 and bearish > bullish:
             return "SELL"
 
-        # -----------------------------------------------------
-        # NO CLEAR DIRECTION
-        # -----------------------------------------------------
-
         return "WAIT"
-
-    # =========================================================
-    # CONFIDENCE CALCULATION
-    # =========================================================
 
     def calculate_confidence(
         self,
@@ -261,13 +376,18 @@ class AnalysisEngine:
         direction
     ):
         """
-        Calculate initial confidence score.
+        Calculate confidence score.
         """
 
         if direction == "WAIT":
+
             return 0.0
 
-        if not isinstance(analysis, dict):
+        if not analysis or not isinstance(
+            analysis,
+            dict
+        ):
+
             return 0.0
 
         score = 0.0
@@ -283,10 +403,6 @@ class AnalysisEngine:
             else "BEARISH"
         )
 
-        # -----------------------------------------------------
-        # MULTI-TIMEFRAME AGREEMENT
-        # -----------------------------------------------------
-
         for timeframe in [
             "H1",
             "M30",
@@ -298,7 +414,10 @@ class AnalysisEngine:
                 {}
             )
 
-            if not isinstance(result, dict):
+            if not isinstance(
+                result,
+                dict
+            ):
                 continue
 
             structure = result.get(
@@ -306,7 +425,10 @@ class AnalysisEngine:
                 {}
             )
 
-            if not isinstance(structure, dict):
+            if not isinstance(
+                structure,
+                dict
+            ):
                 continue
 
             trend = structure.get(
@@ -316,17 +438,20 @@ class AnalysisEngine:
             if trend == expected:
 
                 if timeframe == "H1":
+
                     score += 30
 
                 elif timeframe == "M30":
+
                     score += 25
 
                 elif timeframe == "M5":
+
                     score += 20
 
-        # -----------------------------------------------------
-        # CANDLE PATTERN CONFIRMATION
-        # -----------------------------------------------------
+        # -----------------------------------------
+        # Pattern confirmation
+        # -----------------------------------------
 
         m5 = timeframes.get(
             "M5",
@@ -337,6 +462,13 @@ class AnalysisEngine:
             "patterns",
             []
         )
+
+        if not isinstance(
+            patterns,
+            list
+        ):
+
+            patterns = []
 
         bullish_patterns = {
             "HAMMER",
@@ -354,41 +486,38 @@ class AnalysisEngine:
             "EVENING_STAR"
         }
 
-        if isinstance(patterns, list):
+        for item in reversed(patterns):
 
-            for item in reversed(patterns):
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
 
-                if not isinstance(item, dict):
-                    continue
+            pattern = item.get(
+                "pattern"
+            )
 
-                pattern = item.get(
-                    "pattern"
-                )
+            if (
+                direction == "BUY"
+                and pattern in bullish_patterns
+            ):
 
-                if (
-                    direction == "BUY"
-                    and pattern in bullish_patterns
-                ):
+                score += 15
+                break
 
-                    score += 15
-                    break
+            if (
+                direction == "SELL"
+                and pattern in bearish_patterns
+            ):
 
-                if (
-                    direction == "SELL"
-                    and pattern in bearish_patterns
-                ):
-
-                    score += 15
-                    break
+                score += 15
+                break
 
         return min(
             round(score, 2),
             100.0
         )
-
-    # =========================================================
-    # GENERATE TRADE PLAN
-    # =========================================================
 
     def generate_trade_plan(
         self,
@@ -397,18 +526,22 @@ class AnalysisEngine:
         confidence
     ):
         """
-        Generate a proposed trade plan from
-        the latest M5 structure.
+        Generate a proposed trade plan.
         """
 
         if direction == "WAIT":
+
             return {
                 "success": False,
                 "status": "WAIT",
                 "message": "No valid directional setup"
             }
 
-        if not isinstance(analysis, dict):
+        if not analysis or not isinstance(
+            analysis,
+            dict
+        ):
+
             return {
                 "success": False,
                 "status": "WAIT",
@@ -423,6 +556,17 @@ class AnalysisEngine:
             {}
         )
 
+        if not isinstance(
+            m5,
+            dict
+        ):
+
+            return {
+                "success": False,
+                "status": "WAIT",
+                "message": "No M5 analysis available"
+            }
+
         candles = m5.get(
             "candles",
             []
@@ -434,67 +578,77 @@ class AnalysisEngine:
         )
 
         if not candles:
+
             return {
                 "success": False,
                 "status": "WAIT",
                 "message": "No M5 candles available"
             }
 
-        # -----------------------------------------------------
-        # ENTRY
-        # -----------------------------------------------------
+        entry = candles[-1].get(
+            "close"
+        )
 
-        entry = candles[-1]["close"]
+        if entry is None:
 
-        # -----------------------------------------------------
-        # FIND RECENT SWINGS
-        # -----------------------------------------------------
+            return {
+                "success": False,
+                "status": "WAIT",
+                "message": "Invalid M5 closing price"
+            }
 
         swings = structure.get(
             "swings",
             []
         )
 
+        if not isinstance(
+            swings,
+            list
+        ):
+
+            swings = []
+
         swing_high = None
         swing_low = None
 
-        if isinstance(swings, list):
+        for swing in reversed(swings):
 
-            for swing in reversed(swings):
+            if not isinstance(
+                swing,
+                dict
+            ):
+                continue
 
-                if not isinstance(swing, dict):
-                    continue
+            if (
+                swing.get("type")
+                == "SWING_HIGH"
+            ):
 
-                if (
-                    swing.get("type")
-                    == "SWING_HIGH"
-                ):
+                swing_high = swing.get(
+                    "price"
+                )
 
-                    swing_high = swing.get(
-                        "price"
-                    )
+                break
 
-                    break
+        for swing in reversed(swings):
 
-            for swing in reversed(swings):
+            if not isinstance(
+                swing,
+                dict
+            ):
+                continue
 
-                if not isinstance(swing, dict):
-                    continue
+            if (
+                swing.get("type")
+                == "SWING_LOW"
+            ):
 
-                if (
-                    swing.get("type")
-                    == "SWING_LOW"
-                ):
+                swing_low = swing.get(
+                    "price"
+                )
 
-                    swing_low = swing.get(
-                        "price"
-                    )
-
-                    break
-
-        # -----------------------------------------------------
-        # TRADE REASONS
-        # -----------------------------------------------------
+                break
 
         reasons = []
 
@@ -510,18 +664,19 @@ class AnalysisEngine:
                 "Overall bearish structure"
             )
 
-        # -----------------------------------------------------
-        # BUILD RISK PLAN
-        # -----------------------------------------------------
+        # -----------------------------------------
+        # Risk engine
+        # -----------------------------------------
 
         try:
 
-            return self.risk.build_trade_plan(
+            plan = self.risk.build_trade_plan(
+
                 market=analysis.get(
                     "market",
                     analysis.get(
                         "symbol",
-                        "UNKNOWN"
+                        ""
                     )
                 ),
 
@@ -545,14 +700,22 @@ class AnalysisEngine:
             return {
                 "success": False,
                 "status": "WAIT",
-                "message": (
-                    f"Risk engine error: {error}"
-                )
+                "message": f"Risk engine error: {error}"
             }
 
-    # =========================================================
-    # MAIN ANALYSIS PIPELINE
-    # =========================================================
+        # -----------------------------------------
+        # Protect against None from RiskEngine
+        # -----------------------------------------
+
+        if plan is None:
+
+            return {
+                "success": False,
+                "status": "WAIT",
+                "message": "Risk engine returned no trade plan"
+            }
+
+        return plan
 
     def run(
         self,
@@ -561,52 +724,152 @@ class AnalysisEngine:
     ):
         """
         Complete analysis pipeline.
+
+        IMPORTANT:
+        This method always returns a dictionary.
         """
 
-        # -----------------------------------------------------
-        # STEP 1 — ANALYZE MARKET
-        # -----------------------------------------------------
+        try:
 
-        analysis = self.analyze_market(
-            symbol=symbol,
-            market_name=market_name
-        )
+            analysis = self.analyze_market(
+                symbol=symbol,
+                market_name=market_name
+            )
 
-        if not isinstance(analysis, dict):
+            # -------------------------------------
+            # Protect against None
+            # -------------------------------------
+
+            if not analysis or not isinstance(
+                analysis,
+                dict
+            ):
+
+                return {
+                    "success": False,
+                    "market": market_name or symbol,
+                    "symbol": symbol,
+                    "direction": "WAIT",
+                    "confidence": 0.0,
+                    "trade_plan": {
+                        "success": False,
+                        "status": "WAIT",
+                        "message": "Analysis returned no data"
+                    },
+                    "message": "Analysis engine returned no result"
+                }
+
+            if not analysis.get(
+                "success"
+            ):
+
+                return {
+                    "success": False,
+                    "market": analysis.get(
+                        "market",
+                        market_name or symbol
+                    ),
+                    "symbol": symbol,
+                    "direction": "WAIT",
+                    "confidence": 0.0,
+                    "trade_plan": {
+                        "success": False,
+                        "status": "WAIT",
+                        "message": analysis.get(
+                            "message",
+                            "Market analysis failed"
+                        )
+                    },
+                    "message": analysis.get(
+                        "message",
+                        "Market analysis failed"
+                    ),
+                    "analysis": analysis
+                }
+
+            # -------------------------------------
+            # Direction
+            # -------------------------------------
+
+            direction = self.determine_direction(
+                analysis
+            )
+
+            # -------------------------------------
+            # Confidence
+            # -------------------------------------
+
+            confidence = self.calculate_confidence(
+                analysis,
+                direction
+            )
+
+            # -------------------------------------
+            # Trade plan
+            # -------------------------------------
+
+            trade_plan = self.generate_trade_plan(
+                analysis,
+                direction,
+                confidence
+            )
+
+            if trade_plan is None:
+
+                trade_plan = {
+                    "success": False,
+                    "status": "WAIT",
+                    "message": "No trade plan generated"
+                }
+
+            # -------------------------------------
+            # FINAL RESULT
+            # -------------------------------------
+
             return {
-                "success": False,
-                "message": "Invalid analysis response"
+                "success": True,
+
+                "market": analysis.get(
+                    "market",
+                    market_name or symbol
+                ),
+
+                "symbol": analysis.get(
+                    "symbol",
+                    symbol
+                ),
+
+                "direction": direction,
+
+                "confidence": confidence,
+
+                "trade_plan": trade_plan,
+
+                "analysis": analysis
             }
 
-        if not analysis.get("success"):
-            return analysis
+        except Exception as error:
 
-        # -----------------------------------------------------
-        # STEP 2 — DETERMINE DIRECTION
-        # -----------------------------------------------------
+            # -------------------------------------
+            # NEVER return None
+            # -------------------------------------
 
-        direction = self.determine_direction(
-            analysis
-        )
+            return {
+                "success": False,
 
-        # -----------------------------------------------------
-        # STEP 3 — CALCULATE CONFIDENCE
-        # -----------------------------------------------------
+                "market": market_name or symbol,
 
-        confidence = self.calculate_confidence(
-            analysis,
-            direction
-        )
+                "symbol": symbol,
 
-        # -----------------------------------------------------
-        # STEP 4 — GENERATE TRADE PLAN
-        # -----------------------------------------------------
+                "direction": "WAIT",
 
-        trade_plan = self.generate_trade_plan(
-            analysis,
-            direction,
-            confidence
-        )
+                "confidence": 0.0,
 
-        # -----------------------------------------------------
-        # STEP 
+                "trade_plan": {
+                    "success": False,
+                    "status": "WAIT",
+                    "message": "Analysis engine error"
+                },
+
+                "message": str(error)
+            }
