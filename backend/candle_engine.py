@@ -3,14 +3,8 @@ from datetime import datetime
 
 class CandleEngine:
     """
-    Robust candle preparation engine.
-
-    Retrieves and validates:
-    - M5
-    - M30
-    - H1
-
-    Designed to work with the DerivClient reconnect/retry system.
+    Converts and prepares Deriv candle data
+    for M5, M30 and H1 analysis.
     """
 
     TIMEFRAMES = {
@@ -22,10 +16,6 @@ class CandleEngine:
     def __init__(self, deriv_client):
         self.deriv = deriv_client
 
-    # --------------------------------------------------
-    # GET CANDLES
-    # --------------------------------------------------
-
     def get_candles(
         self,
         symbol,
@@ -33,11 +23,10 @@ class CandleEngine:
         count=200
     ):
         """
-        Retrieve and clean candles for one timeframe.
+        Retrieve candles for a selected timeframe.
         """
 
         if timeframe not in self.TIMEFRAMES:
-
             return {
                 "success": False,
                 "message": f"Unsupported timeframe: {timeframe}",
@@ -49,83 +38,77 @@ class CandleEngine:
         granularity = self.TIMEFRAMES[timeframe]
 
         try:
-
             result = self.deriv.get_candles(
                 symbol=symbol,
                 granularity=granularity,
                 count=count
             )
-
         except Exception as error:
-
             return {
                 "success": False,
-                "message": f"Candle request failed: {error}",
+                "message": str(error),
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "candles": []
             }
 
-        if not result or not result.get("success"):
+        # ------------------------------------------------
+        # Validate Deriv response
+        # ------------------------------------------------
 
+        if not result or not isinstance(result, dict):
+            return {
+                "success": False,
+                "message": "Invalid response from Deriv",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "candles": []
+            }
+
+        if not result.get("success"):
             return {
                 "success": False,
                 "message": result.get(
                     "message",
-                    "Deriv returned no candle data"
-                ) if isinstance(result, dict) else "Invalid Deriv response",
-
+                    "Failed to retrieve candles"
+                ),
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "candles": []
             }
 
-        raw_data = result.get("data", {})
+        raw_data = result.get("data")
 
-        if not isinstance(raw_data, dict):
-
+        if not raw_data or not isinstance(raw_data, dict):
             return {
                 "success": False,
-                "message": "Invalid candle response format",
+                "message": "No candle data returned by Deriv",
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "candles": []
             }
 
-        raw_candles = raw_data.get("candles", [])
+        candles = raw_data.get("candles", [])
 
-        if not isinstance(raw_candles, list):
-
+        if not isinstance(candles, list):
             return {
                 "success": False,
-                "message": "Deriv candle data is not a list",
+                "message": "Invalid candle format returned by Deriv",
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "candles": []
             }
+
+        # ------------------------------------------------
+        # Clean candle data
+        # ------------------------------------------------
 
         cleaned = []
 
-        for candle in raw_candles:
+        for candle in candles:
 
             try:
-
                 epoch = int(candle["epoch"])
-
-                open_price = float(candle["open"])
-                high_price = float(candle["high"])
-                low_price = float(candle["low"])
-                close_price = float(candle["close"])
-
-                # Basic OHLC validation
-                if high_price < low_price:
-                    continue
-
-                if open_price < low_price or open_price > high_price:
-                    continue
-
-                if close_price < low_price or close_price > high_price:
-                    continue
 
                 cleaned.append({
                     "time": epoch,
@@ -134,37 +117,30 @@ class CandleEngine:
                         epoch
                     ).isoformat(),
 
-                    "open": open_price,
-                    "high": high_price,
-                    "low": low_price,
-                    "close": close_price
+                    "open": float(candle["open"]),
+                    "high": float(candle["high"]),
+                    "low": float(candle["low"]),
+                    "close": float(candle["close"])
                 })
 
             except (
                 KeyError,
                 ValueError,
-                TypeError,
-                OverflowError
+                TypeError
             ):
                 continue
 
-        # Oldest → newest
+        # ------------------------------------------------
+        # Sort oldest -> newest
+        # ------------------------------------------------
+
         cleaned.sort(
             key=lambda x: x["time"]
         )
 
-        if not cleaned:
-
-            return {
-                "success": False,
-                "message": (
-                    f"No valid {timeframe} candles "
-                    f"returned for {symbol}"
-                ),
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "candles": []
-            }
+        # ------------------------------------------------
+        # Return cleaned candles
+        # ------------------------------------------------
 
         return {
             "success": True,
@@ -174,10 +150,6 @@ class CandleEngine:
             "candles": cleaned
         }
 
-    # --------------------------------------------------
-    # MULTI-TIMEFRAME DATA
-    # --------------------------------------------------
-
     def get_multi_timeframe_data(
         self,
         symbol,
@@ -186,16 +158,15 @@ class CandleEngine:
         """
         Retrieve M5, M30 and H1 candles.
 
-        Does not hide failed timeframe requests.
+        Returns a consistent response containing
+        success, symbol and timeframe data.
         """
 
         result = {
-            "success": False,
+            "success": True,
             "symbol": symbol,
             "timeframes": {}
         }
-
-        successful_timeframes = 0
 
         for timeframe in self.TIMEFRAMES:
 
@@ -207,42 +178,49 @@ class CandleEngine:
 
             result["timeframes"][timeframe] = data
 
-            if data.get("success"):
+        # ------------------------------------------------
+        # Check whether at least one timeframe worked
+        # ------------------------------------------------
 
+        successful_timeframes = 0
+
+        for timeframe_data in result["timeframes"].values():
+
+            if (
+                isinstance(timeframe_data, dict)
+                and timeframe_data.get("success") is True
+                and len(
+                    timeframe_data.get("candles", [])
+                ) > 0
+            ):
                 successful_timeframes += 1
 
-        # At least one timeframe must work
         if successful_timeframes == 0:
 
+            result["success"] = False
+
             result["message"] = (
-                f"No candle data available for {symbol}"
+                "No candle data available for "
+                "M5, M30 or H1"
             )
 
-            return result
+        else:
 
-        result["success"] = True
+            result["success"] = True
 
-        result["successful_timeframes"] = (
-            successful_timeframes
-        )
+            result["message"] = (
+                f"Retrieved candle data for "
+                f"{successful_timeframes}/3 timeframes"
+            )
 
-        result["failed_timeframes"] = (
-            len(self.TIMEFRAMES)
-            - successful_timeframes
-        )
-
-      return {
-    "success": True,
-    "symbol": symbol,
-    "timeframes": result["timeframes"]
-}
-
-    # --------------------------------------------------
-    # CANDLE DIRECTION
-    # --------------------------------------------------
+        return result
 
     @staticmethod
     def candle_direction(candle):
+        """
+        Determine whether a candle is bullish,
+        bearish or neutral.
+        """
 
         if candle["close"] > candle["open"]:
             return "BULLISH"
@@ -252,36 +230,33 @@ class CandleEngine:
 
         return "NEUTRAL"
 
-    # --------------------------------------------------
-    # CANDLE RANGE
-    # --------------------------------------------------
-
     @staticmethod
     def candle_range(candle):
+        """
+        Calculate total candle range.
+        """
 
         return (
             candle["high"]
             - candle["low"]
         )
 
-    # --------------------------------------------------
-    # BODY
-    # --------------------------------------------------
-
     @staticmethod
     def body_size(candle):
+        """
+        Calculate candle body size.
+        """
 
         return abs(
             candle["close"]
             - candle["open"]
         )
 
-    # --------------------------------------------------
-    # UPPER WICK
-    # --------------------------------------------------
-
     @staticmethod
     def upper_wick(candle):
+        """
+        Calculate upper wick size.
+        """
 
         return (
             candle["high"]
@@ -291,12 +266,11 @@ class CandleEngine:
             )
         )
 
-    # --------------------------------------------------
-    # LOWER WICK
-    # --------------------------------------------------
-
     @staticmethod
     def lower_wick(candle):
+        """
+        Calculate lower wick size.
+        """
 
         return (
             min(
@@ -306,12 +280,11 @@ class CandleEngine:
             - candle["low"]
         )
 
-    # --------------------------------------------------
-    # CANDLE METRICS
-    # --------------------------------------------------
-
     @classmethod
     def candle_metrics(cls, candle):
+        """
+        Return useful candle measurements.
+        """
 
         candle_range = cls.candle_range(
             candle
