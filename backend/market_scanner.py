@@ -1,12 +1,10 @@
-import json
-
-
 class MarketScanner:
     """
     Discovers and filters synthetic markets from Deriv.
     """
 
     def __init__(self, deriv_client):
+
         self.deriv = deriv_client
 
         self.target_markets = [
@@ -19,7 +17,7 @@ class MarketScanner:
             "Jump 10 Index",
             "Jump 25 Index",
             "Jump 50 Index",
-            "Jump 75 Index",
+            "Jump 75 Index"
         ]
 
     def get_markets(self):
@@ -27,49 +25,29 @@ class MarketScanner:
         Request active markets from Deriv.
         """
 
-        if not self.deriv.ws:
-            return {
-                "success": False,
-                "message": "Deriv connection is not active"
-            }
+        result = (
+            self.deriv.get_active_symbols()
+        )
 
-        request = {
-            "active_symbols": "brief",
-            "product_type": "basic"
+        if not result["success"]:
+            return result
+
+        data = result["data"]
+
+        symbols = data.get(
+            "active_symbols",
+            []
+        )
+
+        return {
+            "success": True,
+            "markets": symbols,
+            "count": len(symbols)
         }
-
-        try:
-            self.deriv.ws.send(json.dumps(request))
-
-            response = self.deriv.ws.recv()
-
-            data = json.loads(response)
-
-            if "error" in data:
-                return {
-                    "success": False,
-                    "message": data["error"].get(
-                        "message",
-                        "Unknown Deriv error"
-                    )
-                }
-
-            symbols = data.get("active_symbols", [])
-
-            return {
-                "success": True,
-                "markets": symbols
-            }
-
-        except Exception as error:
-            return {
-                "success": False,
-                "message": str(error)
-            }
 
     def find_target_markets(self):
         """
-        Find the requested synthetic markets.
+        Find requested synthetic markets.
         """
 
         result = self.get_markets()
@@ -82,18 +60,21 @@ class MarketScanner:
         for market in result["markets"]:
 
             display_name = market.get(
-                "display_name",
+                "underlying_symbol_name",
                 ""
             )
 
             symbol = market.get(
-                "symbol",
+                "underlying_symbol",
                 ""
             )
 
+            if not display_name:
+                continue
+
             for target in self.target_markets:
 
-                if target.lower() in display_name.lower():
+                if target.lower() == display_name.lower():
 
                     found.append({
                         "name": display_name,
