@@ -106,11 +106,10 @@ class DerivClient:
         Retrieve active Deriv markets.
         """
 
-        request = {
-            "active_symbols": "brief",
-            "product_type": "basic",
-            "req_id": 1
-        }
+       request = {
+    "active_symbols": "brief",
+    "req_id": 1
+}
 
         return self.send_request(request)
 
