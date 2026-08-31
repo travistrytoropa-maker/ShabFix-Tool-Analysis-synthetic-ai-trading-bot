@@ -4,13 +4,20 @@ import websocket
 
 class DerivClient:
     """
-    Public Deriv market-data client.
+    Deriv public market-data client.
 
-    Authentication is not required for:
-    - Active symbols
-    - Historical candles
-    - Public market data
+    Used for:
+    - Active market discovery
+    - Historical market data
+    - Public price data
+
+    No account authentication is required.
     """
+
+    WS_URL = (
+        "wss://api.derivws.com/"
+        "trading/v1/options/ws/public"
+    )
 
     def __init__(self, app_id=None):
         self.app_id = app_id
@@ -18,20 +25,21 @@ class DerivClient:
 
     def connect(self):
         """
-        Connect to Deriv's public market-data WebSocket.
+        Connect to Deriv's public market-data endpoint.
         """
-
-        url = "wss://ws.binaryws.com/websockets/v3"
 
         try:
             self.ws = websocket.create_connection(
-                url,
-                timeout=15
+                self.WS_URL,
+                timeout=20
             )
 
             return {
                 "success": True,
-                "message": "Connected to Deriv public market data"
+                "message": (
+                    "Connected to Deriv "
+                    "public market data"
+                )
             }
 
         except Exception as error:
@@ -45,7 +53,8 @@ class DerivClient:
 
     def send_request(self, request):
         """
-        Send a request and return the decoded response.
+        Send a request to Deriv and return
+        the decoded response.
         """
 
         if self.ws is None:
@@ -94,11 +103,13 @@ class DerivClient:
 
     def get_active_symbols(self):
         """
-        Retrieve currently available Deriv markets.
+        Retrieve active Deriv markets.
         """
 
         request = {
-            "active_symbols": "brief"
+            "active_symbols": "brief",
+            "product_type": "basic",
+            "req_id": 1
         }
 
         return self.send_request(request)
@@ -123,10 +134,13 @@ class DerivClient:
             "count": count,
             "end": "latest",
             "style": "candles",
-            "granularity": granularity
+            "granularity": granularity,
+            "req_id": 2
         }
 
-        result = self.send_request(request)
+        result = self.send_request(
+            request
+        )
 
         if not result["success"]:
             return result
@@ -138,7 +152,7 @@ class DerivClient:
 
     def close(self):
         """
-        Close the WebSocket connection.
+        Close the WebSocket.
         """
 
         if self.ws:
