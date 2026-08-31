@@ -231,7 +231,11 @@ class CandleEngine:
             - successful_timeframes
         )
 
-        return result
+      return {
+    "success": True,
+    "symbol": symbol,
+    "timeframes": result["timeframes"]
+}
 
     # --------------------------------------------------
     # CANDLE DIRECTION
