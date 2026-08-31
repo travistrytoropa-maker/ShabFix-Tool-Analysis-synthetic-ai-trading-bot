@@ -50,11 +50,14 @@ class AnalysisEngine:
             count=candle_count
         )
 
-        if not data:
-            return {
-                "success": False,
-                "message": "No market data returned"
-            }
+      if not data or not data.get("success"):
+    return {
+        "success": False,
+        "message": data.get(
+            "message",
+            "No market data returned"
+        ) if isinstance(data, dict) else "No market data returned"
+    }
 
         timeframe_results = {}
 
