@@ -3,78 +3,79 @@ import websocket
 
 
 class DerivClient:
+    """
+    Public Deriv market-data client.
+
+    Authentication is not required for:
+    - Active symbols
+    - Historical candles
+    - Public market data
+    """
+
     def __init__(self, app_id=None):
         self.app_id = app_id
         self.ws = None
 
     def connect(self):
         """
-        Connect to Deriv WebSocket API.
+        Connect to Deriv's public market-data WebSocket.
         """
-        url = "wss://ws.derivws.com/websockets/v3"
 
-        if self.app_id:
-            url += f"?app_id={self.app_id}"
+        url = "wss://ws.binaryws.com/websockets/v3"
 
         try:
-            self.ws = websocket.create_connection(url, timeout=10)
+            self.ws = websocket.create_connection(
+                url,
+                timeout=15
+            )
 
             return {
                 "success": True,
-                "message": "Connected to Deriv"
+                "message": "Connected to Deriv public market data"
             }
 
         except Exception as error:
+
+            self.ws = None
+
             return {
                 "success": False,
                 "message": str(error)
             }
 
-    def get_candles(
-        self,
-        symbol,
-        granularity=300,
-        count=200
-    ):
+    def send_request(self, request):
         """
-        Request historical OHLC candles.
-
-        granularity:
-        300  = M5
-        1800 = M30
-        3600 = H1
+        Send a request and return the decoded response.
         """
 
-        if not self.ws:
-            return {
-                "success": False,
-                "message": "Deriv connection is not active"
-            }
+        if self.ws is None:
 
-        request = {
-            "ticks_history": symbol,
-            "adjust_start_time": 1,
-            "count": count,
-            "end": "latest",
-            "start": 1,
-            "style": "candles",
-            "granularity": granularity
-        }
+            connection = self.connect()
+
+            if not connection["success"]:
+                return connection
 
         try:
-            self.ws.send(json.dumps(request))
+
+            self.ws.send(
+                json.dumps(request)
+            )
 
             response = self.ws.recv()
 
             data = json.loads(response)
 
             if "error" in data:
+
+                error = data["error"]
+
                 return {
                     "success": False,
-                    "message": data["error"].get(
+                    "message": error.get(
                         "message",
-                        "Unknown Deriv error"
-                    )
+                        "Deriv API error"
+                    ),
+                    "error": error
                 }
 
             return {
@@ -83,15 +84,70 @@ class DerivClient:
             }
 
         except Exception as error:
+
+            self.ws = None
+
             return {
                 "success": False,
                 "message": str(error)
             }
 
+    def get_active_symbols(self):
+        """
+        Retrieve currently available Deriv markets.
+        """
+
+        request = {
+            "active_symbols": "brief"
+        }
+
+        return self.send_request(request)
+
+    def get_candles(
+        self,
+        symbol,
+        granularity=300,
+        count=200
+    ):
+        """
+        Retrieve historical OHLC candles.
+
+        M5  = 300 seconds
+        M30 = 1800 seconds
+        H1  = 3600 seconds
+        """
+
+        request = {
+            "ticks_history": symbol,
+            "adjust_start_time": 1,
+            "count": count,
+            "end": "latest",
+            "style": "candles",
+            "granularity": granularity
+        }
+
+        result = self.send_request(request)
+
+        if not result["success"]:
+            return result
+
+        return {
+            "success": True,
+            "data": result["data"]
+        }
+
     def close(self):
         """
-        Close the Deriv connection.
+        Close the WebSocket connection.
         """
+
         if self.ws:
-            self.ws.close()
-            self.ws = None
+
+            try:
+                self.ws.close()
+
+            except Exception:
+                pass
+
+            finally:
+                self.ws = None
